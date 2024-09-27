@@ -1,0 +1,63 @@
+services:
+  scheduler:
+    build:
+      context: ./docker/scheduler
+    image: movielens-dask-scheduler:latest
+    ports:
+      - "8786:8786"  # Puerto para la comunicación de Dask
+      - "8787:8787"  # Puerto para el dashboard de Dask
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  worker:
+    build:
+      context: ./docker/worker
+    image: movielens-dask-worker:latest
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    depends_on:
+      - scheduler
+    deploy:
+      replicas: 2  # Número de workers, ajustar según necesidad
+      placement:
+        constraints: [node.role != manager]
+  
+  # Servicio para ejecutar el script de procesamiento
+  processor:
+    image: python:3.9-slim
+    volumes:
+      - ./scripts:/scripts
+      - scripts-data:/scripts-data
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    depends_on:
+      - scheduler
+      - worker
+    command: >
+      bash -c "
+      pip install dask[distributed] s3fs boto3 &&
+      python /scripts/process_movielens.py
+      "
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+volumes:
+  scripts-data:
+    driver: local
+
+# Redes para la comunicación interna
+networks:
+  default:
+    driver: overlay
